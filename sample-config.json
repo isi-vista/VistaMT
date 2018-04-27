@@ -1,0 +1,7 @@
+{
+  "emb_dim": 512,
+  "out_emb_dim": 512,
+  "dropout_rate": 0.2,
+  "encoder_arch": [[10,3,512]],
+  "decoder_arch": [[10,3,512]]
+}
