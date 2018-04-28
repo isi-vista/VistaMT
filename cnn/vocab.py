@@ -1,6 +1,6 @@
 import sys
 import operator
-from collections import defaultdict
+from collections import OrderedDict
 
 
 class Vocab(object):
@@ -21,18 +21,21 @@ class Vocab(object):
         else:
             raise ValueError('must pass one of sentences_paths or vocab_path')
         self.unk_index = self._word2index.get(Vocab.UNK)
-        
+
     def _from_sentences(self, sentences_paths):
         self._words.append(Vocab.UNK)
         self._words.append(Vocab.SENT_START)
         self._words.append(Vocab.SENT_END)
-        counts = defaultdict(int)
+        counts = OrderedDict()
         for path in sentences_paths:
-            with open(path) as f:
+            with open(path, 'r', encoding='utf8') as f:
                 for line in f:
                     for word in line.rstrip().split():
                         if not word in Vocab.RESERVED:
-                            counts[word] += 1
+                            if word not in counts:
+                                counts[word] = 1
+                            else:
+                                counts[word] += 1
         sorted_items = sorted(counts.items(), key=operator.itemgetter(1),
                               reverse=True)
         self._words.extend([x[0] for x in sorted_items])
@@ -40,7 +43,7 @@ class Vocab(object):
             self._word2index[word] = i
 
     def _from_vocab_file(self, vocab_path):
-        with open(vocab_path) as f:
+        with open(vocab_path, 'r', encoding='utf8') as f:
             for i, line in enumerate(f):
                 word = line.rstrip()
                 self._words.append(word)
@@ -59,7 +62,7 @@ class Vocab(object):
         return joiner.join([self.word_for_index(x) for x in indexes])
 
     def write(self, path):
-        with open(path, 'w') as f:
+        with open(path, 'w', encoding='utf8') as f:
             for word in self._words:
                 print(word, file=f)
 
