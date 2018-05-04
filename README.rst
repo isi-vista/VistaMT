@@ -255,7 +255,7 @@ Usage
     --beam-width BEAM_WIDTH
                           (default: 10)
     --max-words MAX_WORDS
-                          (default: 50)
+                          (default: 80)
     --model-filename MODEL_FILENAME
                           use specific model instead of latest iter
     --log-level LOG_LEVEL

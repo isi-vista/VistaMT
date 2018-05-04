@@ -28,7 +28,7 @@ def main():
     parser.add_argument('tgt')
     parser.add_argument('--beam-width', type=int, default=10,
                         help='(default: %(default)s)')
-    parser.add_argument('--max-words', type=int, default=50,
+    parser.add_argument('--max-words', type=int, default=80,
                         help='(default: %(default)s)')
     parser.add_argument('--model-filename',
                         help='use specific model instead of latest iter')
