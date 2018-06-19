@@ -53,8 +53,7 @@ class CNMT(object):
 
     def build_trainer(self, optimizer):
         tparams = self.tparams
-        x, x_mask, y_lshifted, y_rshifted, y_mask, cost, train, lr = \
-            self._build_model(tparams)
+        x, x_mask, y_lshifted, y_rshifted, y_mask, cost, train, lr = self._build_model(tparams)
         grads = []
         for kk, vv in tparams.items():
             grads.append(T.grad(cost, vv))
@@ -84,8 +83,7 @@ class CNMT(object):
         f_init, f_next = self._build_sampler(tparams)
 
         def predict(x, beam_width, max_words):
-            samples, costs = self._gen_nbest(f_init, f_next, x, beam_width,
-                                             max_words)
+            samples, costs = self._gen_nbest(f_init, f_next, x, beam_width, max_words)
             best_sample = None
             best_cost = np.finfo(np.float32).max
             for c, s in zip(costs, samples):
@@ -149,8 +147,7 @@ class CNMT(object):
         retain_rate = 1 - dropout_rate
         result = T.switch(
             train,
-            layer_in * trng.binomial(dropout_shape, p=retain_rate, n=1,
-                                     dtype=layer_in.dtype),
+            layer_in * trng.binomial(dropout_shape, p=retain_rate, n=1, dtype=layer_in.dtype),
             layer_in * retain_rate)
         return result
 
@@ -162,8 +159,7 @@ class CNMT(object):
             size=(voc_size, self.config.emb_dim), scale=0.1)
 
     def _ff_layer(self, tparams, layer_in, prefix, activation):
-        return activation(T.dot(
-            layer_in, tparams[self._prepend(prefix, 'W')])
+        return activation(T.dot(layer_in, tparams[self._prepend(prefix, 'W')])
                           + tparams[self._prepend(prefix, 'b')])
 
     def _init_ff_layer(self, params, prefix, d_in, d_out, dropout=0):
@@ -189,8 +185,7 @@ class CNMT(object):
         # dropout
         x_emb = self._dropout_layer(x_emb, train)
         # transform input
-        conv_in = self._ff_layer(tparams, x_emb, self._prepend(prefix, 'prj_in'),
-                                 self._linear)
+        conv_in = self._ff_layer(tparams, x_emb, self._prepend(prefix, 'prj_in'), self._linear)
         # convolutions
         conv_out = None
         in_dim = arch[0][2]
@@ -200,19 +195,17 @@ class CNMT(object):
             if dim != in_dim:
                 # transform input for this stack
                 prj_name = 'stack_prj_in_' + str(idx)
-                conv_in = self._ff_layer(tparams, conv_in,
-                                         self._prepend(prefix, prj_name), self._linear)
+                conv_in = self._ff_layer(tparams, conv_in, self._prepend(prefix, prj_name),
+                                         self._linear)
             # convolution stack
             conv_out = self._encoder_stack(tparams, conv_in, width, dim,
                                            self._prepend(prefix, stack_name), train)
             in_dim = dim
             conv_in = conv_out
         # transform output
-        ctx = self._ff_layer(tparams, conv_out,
-                             self._prepend(prefix, 'prj_out'), self._linear)
+        ctx = self._ff_layer(tparams, conv_out, self._prepend(prefix, 'prj_out'), self._linear)
         # scale gradients
-        ctx = theano.gradient.grad_scale(
-            ctx, 1. / (2 * self.num_decoder_layers))
+        ctx = theano.gradient.grad_scale(ctx, 1. / (2 * self.num_decoder_layers))
         # context plus word embedding
         ctx_plus_emb = (ctx + x_emb) / sqrt(2)
         return ctx, ctx_plus_emb
@@ -228,12 +221,10 @@ class CNMT(object):
                                  non_sequences=(width, dim, input_shape, train))
         return enc_out[-1]
 
-    def _encoder_block(self, W, b, Wg, bg, block_in, width, dim, input_shape,
-                       train):
+    def _encoder_block(self, W, b, Wg, bg, block_in, width, dim, input_shape, train):
         batch_size = input_shape[0]
         # input dropout
-        conv_in = self._dropout_layer(block_in, train,
-                                      dropout_shape=input_shape)
+        conv_in = self._dropout_layer(block_in, train, dropout_shape=input_shape)
         # pad borders
         padding = T.zeros((batch_size, width // 2, dim))
         conv_in = T.concatenate((padding, conv_in), axis=1)
@@ -248,21 +239,17 @@ class CNMT(object):
         params[self._prepend(prefix, 'W')] = self._normal_weights(
             size=(depth, dim, dim, width),
             scale=sqrt((4.0 * (1.0 - dropout)) / (dim * width)))
-        params[self._prepend(prefix, 'b')] = self._zero_weights(
-            (depth, dim))
+        params[self._prepend(prefix, 'b')] = self._zero_weights((depth, dim))
         params[self._prepend(prefix, 'Wg')] = self._normal_weights(
             size=(depth, dim, dim, width),
             scale=sqrt((4.0 * (1.0 - dropout)) / (dim * width)))
-        params[self._prepend(prefix, 'bg')] = self._zero_weights(
-            (depth, dim))
+        params[self._prepend(prefix, 'bg')] = self._zero_weights((depth, dim))
 
     def _init_encoder(self, params, prefix, dropout):
         arch = self.config.encoder_arch
-        self._init_emb_layer(params, self._prepend(prefix, 'w_emb'),
-                             self.x_vocab.size())
+        self._init_emb_layer(params, self._prepend(prefix, 'w_emb'), self.x_vocab.size())
         in_dim = arch[0][2]
-        self._init_ff_layer(params, self._prepend(prefix, 'prj_in'),
-                            self.config.emb_dim, in_dim,
+        self._init_ff_layer(params, self._prepend(prefix, 'prj_in'), self.config.emb_dim, in_dim,
                             dropout=dropout)
         dim = None
         for idx, spec in enumerate(arch):
@@ -270,17 +257,15 @@ class CNMT(object):
             depth, width, dim = spec
             if dim != in_dim:
                 prj_name = 'stack_prj_in_' + str(idx)
-                self._init_ff_layer(params, self._prepend(prefix, prj_name),
-                                    in_dim, dim)
-            self._init_encoder_stack(params, self._prepend(prefix, stack_name),
-                                     width, depth, dim, dropout)
+                self._init_ff_layer(params, self._prepend(prefix, prj_name), in_dim, dim)
+            self._init_encoder_stack(params, self._prepend(prefix, stack_name), width, depth, dim,
+                                     dropout)
             in_dim = dim
-        self._init_ff_layer(params, self._prepend(prefix, 'prj_out'),
-                            dim, self.config.emb_dim)
+        self._init_ff_layer(params, self._prepend(prefix, 'prj_out'), dim, self.config.emb_dim)
 
     @staticmethod
-    def _attention_block(W_ATT_in, b_ATT_in, W_ATT_out, b_ATT_out,
-                         ctx, ctx_plus_emb, x_mask, prev_w_emb, state_pre_attn):
+    def _attention_block(W_ATT_in, b_ATT_in, W_ATT_out, b_ATT_out, ctx, ctx_plus_emb, x_mask,
+                         prev_w_emb, state_pre_attn):
         state_attn = T.dot(state_pre_attn, W_ATT_in) + b_ATT_in
         state_attn = (state_attn + prev_w_emb) / sqrt(2)
         x_len = x_mask.sum(axis=1).dimshuffle(0, 'x', 'x')
@@ -302,8 +287,7 @@ class CNMT(object):
         # dropout
         y_emb = self._dropout_layer(y_emb, train)
         # transform input
-        conv_in = self._ff_layer(tparams, y_emb, self._prepend(prefix, 'prj_in'),
-                                 self._linear)
+        conv_in = self._ff_layer(tparams, y_emb, self._prepend(prefix, 'prj_in'), self._linear)
         # convolutions
         conv_out = None
         in_dim = arch[0][2]
@@ -313,26 +297,24 @@ class CNMT(object):
             if dim != in_dim:
                 # transform input for this stack
                 prj_name = 'stack_prj_in_' + str(idx)
-                conv_in = self._ff_layer(tparams, conv_in,
-                                         self._prepend(prefix, prj_name), self._linear)
+                conv_in = self._ff_layer(tparams, conv_in, self._prepend(prefix, prj_name),
+                                         self._linear)
             # convolution stack
-            conv_out = self._decoder_stack(tparams, conv_in, ctx, ctx_plus_emb,
-                                           x_mask, y_emb, width, dim, self._prepend(prefix, stack_name),
-                                           train)
+            conv_out = self._decoder_stack(tparams, conv_in, ctx, ctx_plus_emb, x_mask, y_emb,
+                                           width, dim, self._prepend(prefix, stack_name), train)
             in_dim = dim
             conv_in = conv_out
         # transform output
-        dec_out = self._ff_layer(tparams, conv_out, self._prepend(prefix,
-                                                                  'prj_out_1'), self._linear)
+        dec_out = self._ff_layer(tparams, conv_out, self._prepend(prefix, 'prj_out_1'),
+                                 self._linear)
         # dropout
         dec_out = self._dropout_layer(dec_out, train)
         # output layer
-        logit = self._ff_layer(tparams, dec_out, self._prepend(prefix,
-                                                               'prj_out_2'), self._linear)
+        logit = self._ff_layer(tparams, dec_out, self._prepend(prefix, 'prj_out_2'), self._linear)
         return logit
 
-    def _decoder_stack(self, tparams, stack_in, ctx, ctx_plus_emb, x_mask,
-                       y_emb, width, dim, prefix, train):
+    def _decoder_stack(self, tparams, stack_in, ctx, ctx_plus_emb, x_mask, y_emb, width, dim,
+                       prefix, train):
         input_shape = stack_in.shape
         layer_out, _ = theano.scan(self._decoder_block,
                                    sequences=(tparams[self._prepend(prefix, 'W')],
@@ -348,21 +330,19 @@ class CNMT(object):
                                                   input_shape, train))
         return layer_out[-1]
 
-    def _decoder_block(self, W, b, Wg, bg, W_ATT_in, b_ATT_in, W_ATT_out,
-                       b_ATT_out, block_in, ctx, ctx_plus_emb, x_mask, y_emb, width, dim,
-                       input_shape, train):
+    def _decoder_block(self, W, b, Wg, bg, W_ATT_in, b_ATT_in, W_ATT_out, b_ATT_out, block_in,
+                       ctx, ctx_plus_emb, x_mask, y_emb, width, dim, input_shape, train):
         batch_size = input_shape[0]
         # input dropout
-        conv_in = self._dropout_layer(block_in, train,
-                                      dropout_shape=input_shape)
+        conv_in = self._dropout_layer(block_in, train, dropout_shape=input_shape)
         # pad left border
         padding = T.zeros((batch_size, width - 1, dim))
         conv_in = T.concatenate((padding, conv_in), axis=1)
         # convolution_block
         state_pre_attn = self._convolution_block(W, b, Wg, bg, conv_in)
         # attention
-        state_post_attn = self._attention_block(W_ATT_in, b_ATT_in, W_ATT_out,
-                                                b_ATT_out, ctx, ctx_plus_emb, x_mask, y_emb, state_pre_attn)
+        state_post_attn = self._attention_block(W_ATT_in, b_ATT_in, W_ATT_out, b_ATT_out, ctx,
+                                                ctx_plus_emb, x_mask, y_emb, state_pre_attn)
         state_combined = (state_pre_attn + state_post_attn) / sqrt(2)
         # residual connections
         result = (state_combined + block_in) / sqrt(2)
@@ -372,31 +352,25 @@ class CNMT(object):
         params[self._prepend(prefix, 'W')] = self._normal_weights(
             size=(depth, dim, dim, width),
             scale=sqrt((4.0 * (1.0 - dropout)) / (dim * width)))
-        params[self._prepend(prefix, 'b')] = self._zero_weights(
-            (depth, dim))
+        params[self._prepend(prefix, 'b')] = self._zero_weights((depth, dim))
         params[self._prepend(prefix, 'Wg')] = self._normal_weights(
             size=(depth, dim, dim, width),
             scale=sqrt((4.0 * (1.0 - dropout)) / (dim * width)))
-        params[self._prepend(prefix, 'bg')] = self._zero_weights(
-            (depth, dim))
+        params[self._prepend(prefix, 'bg')] = self._zero_weights((depth, dim))
         params[self._prepend(prefix, 'W_ATT_in')] = self._normal_weights(
             size=(depth, dim, self.config.emb_dim),
             scale=sqrt(1. / dim))
-        params[self._prepend(prefix, 'b_ATT_in')] = self._zero_weights(
-            (depth, self.config.emb_dim))
+        params[self._prepend(prefix, 'b_ATT_in')] = self._zero_weights((depth, self.config.emb_dim))
         params[self._prepend(prefix, 'W_ATT_out')] = self._normal_weights(
             size=(depth, self.config.emb_dim, dim),
             scale=sqrt(1. / self.config.emb_dim))
-        params[self._prepend(prefix, 'b_ATT_out')] = self._zero_weights(
-            (depth, dim))
+        params[self._prepend(prefix, 'b_ATT_out')] = self._zero_weights((depth, dim))
 
     def _init_decoder(self, params, prefix, dropout):
         arch = self.config.decoder_arch
-        self._init_emb_layer(params, self._prepend(prefix, 'w_emb'),
-                             self.y_vocab.size())
+        self._init_emb_layer(params, self._prepend(prefix, 'w_emb'), self.y_vocab.size())
         in_dim = arch[0][2]
-        self._init_ff_layer(params, self._prepend(prefix, 'prj_in'),
-                            self.config.emb_dim, in_dim,
+        self._init_ff_layer(params, self._prepend(prefix, 'prj_in'), self.config.emb_dim, in_dim,
                             dropout=dropout)
         dim = None
         for idx, spec in enumerate(arch):
@@ -404,16 +378,14 @@ class CNMT(object):
             depth, width, dim = spec
             if dim != in_dim:
                 prj_name = 'stack_prj_in_' + str(idx)
-                self._init_ff_layer(params, self._prepend(prefix, prj_name),
-                                    in_dim, dim)
-            self._init_decoder_stack(params, self._prepend(prefix, stack_name),
-                                     width, depth, dim, dropout)
+                self._init_ff_layer(params, self._prepend(prefix, prj_name), in_dim, dim)
+            self._init_decoder_stack(params, self._prepend(prefix, stack_name), width, depth, dim,
+                                     dropout)
             in_dim = dim
-        self._init_ff_layer(params, self._prepend(prefix, 'prj_out_1'),
-                            dim, self.config.out_emb_dim)
-        self._init_ff_layer(params, self._prepend(prefix, 'prj_out_2'),
-                            self.config.out_emb_dim, self.y_vocab.size(),
-                            dropout=dropout)
+        self._init_ff_layer(params, self._prepend(prefix, 'prj_out_1'), dim,
+                            self.config.out_emb_dim)
+        self._init_ff_layer(params, self._prepend(prefix, 'prj_out_2'), self.config.out_emb_dim,
+                            self.y_vocab.size(), dropout=dropout)
 
     def _build_model(self, tparams):
         # setup
@@ -428,8 +400,7 @@ class CNMT(object):
         # encoder
         ctx, ctx_plus_emb = self._encoder(tparams, x, 'enc', train)
         # decoder
-        logit = self._decoder(tparams, y_rshifted, ctx, ctx_plus_emb, x_mask,
-                              'dec', train)
+        logit = self._decoder(tparams, y_rshifted, ctx, ctx_plus_emb, x_mask, 'dec', train)
         # target probs
         n_target_words = logit.shape[2]
         logit_shaped = logit.reshape([batch_size * max_y, n_target_words])
@@ -457,8 +428,7 @@ class CNMT(object):
                                       g))
         return new_grads
 
-    def _decoder_step(self, tparams, prev_state, prev_w, ctx, ctx_plus_emb,
-                      x_mask, prefix):
+    def _decoder_step(self, tparams, prev_state, prev_w, ctx, ctx_plus_emb, x_mask, prefix):
         arch = self.config.decoder_arch
         # embed previous word
         prev_w_emb = self._emb_layer(tparams, prev_w.dimshuffle(0, 'x'),
@@ -466,8 +436,7 @@ class CNMT(object):
         prev_w_emb = self._dropout_layer(prev_w_emb, train=0)
         prev_w_emb = T.unbroadcast(prev_w_emb, 1)
         # transform input
-        conv_in = self._ff_layer(tparams, prev_w_emb,
-                                 self._prepend(prefix, 'prj_in'), self._linear)
+        conv_in = self._ff_layer(tparams, prev_w_emb, self._prepend(prefix, 'prj_in'), self._linear)
         # decode step
         in_dim = arch[0][2]
         next_state = []
@@ -478,27 +447,26 @@ class CNMT(object):
             if dim != in_dim:
                 # transform input for this stack
                 prj_name = 'stack_prj_in_' + str(idx)
-                conv_in = self._ff_layer(tparams, conv_in,
-                                         self._prepend(prefix, prj_name), self._linear)
+                conv_in = self._ff_layer(tparams, conv_in, self._prepend(prefix, prj_name),
+                                         self._linear)
             # convolution stack
-            conv_out, next_s = self._decoder_stack_step(tparams, conv_in,
-                                                        prev_state[idx], ctx, ctx_plus_emb, x_mask, prev_w_emb, width,
+            conv_out, next_s = self._decoder_stack_step(tparams, conv_in, prev_state[idx], ctx,
+                                                        ctx_plus_emb, x_mask, prev_w_emb, width,
                                                         self._prepend(prefix, stack_name))
             in_dim = dim
             conv_in = conv_out
             next_state.append(next_s)
         # transform output
-        dec_out = self._ff_layer(tparams, conv_out, self._prepend(prefix,
-                                                                  'prj_out_1'), self._linear)
+        dec_out = self._ff_layer(tparams, conv_out, self._prepend(prefix, 'prj_out_1'),
+                                 self._linear)
         # dropout
         dec_out = self._dropout_layer(dec_out, train=0)
         # return logit
-        logit = self._ff_layer(tparams, dec_out, self._prepend(prefix,
-                                                               'prj_out_2'), self._linear)
+        logit = self._ff_layer(tparams, dec_out, self._prepend(prefix, 'prj_out_2'), self._linear)
         return logit, next_state
 
-    def _decoder_stack_step(self, tparams, stack_in, prev_state, ctx,
-                            ctx_plus_emb, x_mask, prev_w_emb, width, prefix):
+    def _decoder_stack_step(self, tparams, stack_in, prev_state, ctx, ctx_plus_emb, x_mask,
+                            prev_w_emb, width, prefix):
         prev_state = prev_state.dimshuffle(1, 0, 2, 3)
         input_shape = stack_in.shape
         outs, _ = theano.scan(self._decoder_block_step,
@@ -512,27 +480,27 @@ class CNMT(object):
                                          tparams[self._prepend(prefix, 'b_ATT_out')],
                                          prev_state),
                               outputs_info=(stack_in, None),
-                              non_sequences=(ctx, ctx_plus_emb, x_mask, prev_w_emb, width, input_shape))
+                              non_sequences=(ctx, ctx_plus_emb, x_mask, prev_w_emb, width,
+                                             input_shape))
         layers_out = outs[0]
         next_state = outs[1]
         stack_out = layers_out[-1]
         next_state = next_state.dimshuffle(1, 0, 2, 3)
         return stack_out, next_state
 
-    def _decoder_block_step(self, W, b, Wg, bg, W_ATT_in, b_ATT_in, W_ATT_out,
-                            b_ATT_out, prev_state, block_in, ctx, ctx_plus_emb, x_mask, prev_w_emb,
-                            width, input_shape):
+    def _decoder_block_step(self, W, b, Wg, bg, W_ATT_in, b_ATT_in, W_ATT_out, b_ATT_out,
+                            prev_state, block_in, ctx, ctx_plus_emb, x_mask, prev_w_emb, width,
+                            input_shape):
         # input dropout
-        conv_in = self._dropout_layer(block_in, train=0,
-                                      dropout_shape=input_shape)
+        conv_in = self._dropout_layer(block_in, train=0, dropout_shape=input_shape)
         # prepend previous inputs
         conv_in = T.concatenate((prev_state, conv_in), axis=1)
         next_state = conv_in[:, 1:width, :]
         # convolution_block
         state_pre_attn = self._convolution_block(W, b, Wg, bg, conv_in)
         # attention
-        state_post_attn = self._attention_block(W_ATT_in, b_ATT_in, W_ATT_out,
-                                                b_ATT_out, ctx, ctx_plus_emb, x_mask, prev_w_emb, state_pre_attn)
+        state_post_attn = self._attention_block(W_ATT_in, b_ATT_in, W_ATT_out, b_ATT_out, ctx,
+                                                ctx_plus_emb, x_mask, prev_w_emb, state_pre_attn)
         state_combined = (state_pre_attn + state_post_attn) / sqrt(2)
         # residual connections
         result = (state_combined + block_in) / sqrt(2)
@@ -544,7 +512,7 @@ class CNMT(object):
         # encode context
         ctx, ctx_plus_emb = self._encoder(tparams, x, 'enc', train=0)
         # initializer function
-        f_context = theano.function([x], [ctx, ctx_plus_emb])
+        f_context = theano.function(inputs=[x], outputs=[ctx, ctx_plus_emb])
 
         def f_init(x_):
             ctx_, ctx_plus_emb_ = f_context(x_)
@@ -560,16 +528,16 @@ class CNMT(object):
         prev_w = T.ivector('prev_w')
         batch_size = prev_state[0].shape[0]
         # decoder step
-        logit, next_state = self._decoder_step(tparams, prev_state, prev_w,
-                                               ctx, ctx_plus_emb, x_mask, 'dec')
+        logit, next_state = self._decoder_step(tparams, prev_state, prev_w, ctx, ctx_plus_emb,
+                                               x_mask, 'dec')
         # next word and state
         n_target_words = logit.shape[2]
         logit_shaped = logit.reshape([batch_size, n_target_words])
         next_probs = T.nnet.softmax(logit_shaped)
         next_sample = trng.multinomial(pvals=next_probs).argmax(1)
         # next word/state function
-        f_next_T = theano.function([*prev_state, ctx, ctx_plus_emb, prev_w],
-                                   [next_probs, next_sample, *next_state])
+        f_next_T = theano.function(inputs=[*prev_state, ctx, ctx_plus_emb, prev_w],
+                                   outputs=[next_probs, next_sample, *next_state])
 
         def f_next(prev_state_, ctx_, ctx_plus_emb_, prev_w_):
             result = f_next_T(*prev_state_, ctx_, ctx_plus_emb_, prev_w_)
@@ -647,8 +615,7 @@ class CNMT(object):
                 break
             if num_complete >= n:
                 break
-            w = np.array([sent[-1] for sent
-                          in partial_theories]).astype('int32')
+            w = np.array([sent[-1] for sent in partial_theories]).astype('int32')
             state = [np.array(s) for s in partial_states]
         if num_active > 0:
             for idx in range(num_active):
@@ -656,11 +623,10 @@ class CNMT(object):
                 complete_costs.append(partial_costs[idx])
         return complete_theories, complete_costs
 
-    def _append_state(self, new_states, old_states, state_idx,
-                      copy_state=False):
+    def _append_state(self, new_states, old_states, state_idx, copy_state=False):
         for i in range(self.num_decoder_stacks):
-            state = old_states[i][state_idx] if not copy_state else \
-                copy.copy(old_states[i][state_idx])
+            state = old_states[i][state_idx] if not copy_state else copy.copy(
+                old_states[i][state_idx])
             new_states[i].append(state)
 
     def _build_batch_sampler(self, tparams):
@@ -668,12 +634,10 @@ class CNMT(object):
         x_mask = T.matrix('x_mask')
         n = T.iscalar("n")
         ctx, ctx_plus_emb = self._encoder(tparams, x, 'enc', train=0)
-        state = [T.zeros([x.shape[0], a[0], a[1] - 1, a[2]])
-                 for a in self.config.decoder_arch]
+        state = [T.zeros([x.shape[0], a[0], a[1] - 1, a[2]]) for a in self.config.decoder_arch]
         w = T.zeros([x.shape[0]], dtype='int64') + self.y_vocab.lookup(Vocab.SENT_START)
-        decoder_param_keys, decoder_param_vals = self.get_decoder_shared_vars()
+        decoder_params = {k: self.tparams[k] for k in self.tparams.keys() if k.startswith('dec_')}
         non_seqs = [ctx, ctx_plus_emb, x_mask]
-        non_seqs.extend(decoder_param_vals)
 
         def f_step(*args):
             k = self.num_decoder_stacks
@@ -682,13 +646,9 @@ class CNMT(object):
             ctx_ = args[k + 1]
             ctx_plus_emb_ = args[k + 2]
             x_mask_ = args[k + 3]
-            param_vals = args[k + 4:]
-            dec_params = {}
-            for k, v in zip(decoder_param_keys, param_vals):
-                dec_params[k] = v
             batch_size = prev_state[0].shape[0]
-            logit, next_state = self._decoder_step(dec_params, prev_state, prev_w,
-                                                   ctx_, ctx_plus_emb_, x_mask_, 'dec')
+            logit, next_state = self._decoder_step(decoder_params, prev_state, prev_w, ctx_,
+                                                   ctx_plus_emb_, x_mask_, 'dec')
             n_target_words = logit.shape[2]
             logit_shaped = logit.reshape([batch_size, n_target_words])
             next_w = T.argmax(logit_shaped, axis=1)
@@ -697,17 +657,7 @@ class CNMT(object):
         result, updates = theano.scan(fn=f_step,
                                       outputs_info=state + [w],
                                       non_sequences=non_seqs,
-                                      n_steps=n,
-                                      strict=True)
+                                      n_steps=n)
         final_result = result[-1].dimshuffle(1, 0)
-        f_sample = theano.function([x, x_mask, n], final_result, updates=updates)
+        f_sample = theano.function(inputs=[x, x_mask, n], outputs=final_result, updates=updates)
         return f_sample
-
-    def get_decoder_shared_vars(self):
-        keys = []
-        vals = []
-        for k, v in self.tparams.items():
-            if k.startswith('dec_'):
-                keys.append(k)
-                vals.append(v)
-        return keys, vals
