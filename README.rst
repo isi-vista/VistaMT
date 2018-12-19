@@ -14,7 +14,8 @@ ISI's convolutional sequence-to-sequence software for machine translation.
 Requirements
 ============
 
-* Python3, numpy, theano
+* Python3, numpy, tensorflow
+* cuda, cudnn
 
 Tested configuration
 --------------------
@@ -22,32 +23,30 @@ Tested configuration
 ::
 
   $ python -V
-  Python 3.5.4 :: Anaconda custom (64-bit)
+  Python 3.6.7 :: Anaconda, Inc.
 
-  $ conda list | egrep -i '(numpy|theano|pygpu|libgpuarray)'
-  libgpuarray               0.7.5                h14c3975_0
-  numpy                     1.14.1                    <pip>
-  numpy                     1.12.1           py35hca0bb5e_1
-  pygpu                     0.7.5            py35h14c3975_0
-  Theano                    1.0.1                     <pip>
+  $ pip freeze | egrep -i 'numpy|tensorflow'
+  numpy==1.15.4
+  tensorflow-gpu==1.12.0
 
   $ nvidia-smi | grep Driver
-  | NVIDIA-SMI 384.90                 Driver Version: 384.90                    |
+  | NVIDIA-SMI 390.48                 Driver Version: 390.48
 
 Also:
 
-* cuda-8.0
+* cuda-9.0
 
-* cudnn-8.0-linux-x64-v5.1
+* cudnn-9.0-linux-x64-v7.4.1.5
 
 Example CUDA/cuDNN setup::
 
-  CUDA_HOME=/usr/local/cuda-8.0
-  CUDNN_HOME=/nfs/isicvlnas01/share/cudnn-8.0-linux-x64-v5.1
+  CUDA_HOME=/usr/local/cuda-9.0
+  CUDNN_HOME=/usr/local/cudnn-9.0-linux-x64-v7.4.1.5
   export PATH=$CUDA_HOME/bin:$PATH
   export CPATH="$CUDNN_HOME/cuda/include:$CUDA_HOME/include:$CPATH"
   export LD_LIBRARY_PATH="$CUDNN_HOME/cuda/lib64/:$LD_LIBRARY_PATH"
   export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
+  export LIBRARY_PATH=$LD_LIBRARY_PATH
 
 
 Training
@@ -61,12 +60,14 @@ Usage
   [~/VistaMT]
   $ export PYTHONPATH=`pwd`
   $ tools/train.py -h
-  usage: train.py [-h] [--config CONFIG] --valid-freq VALID_FREQ
+  usage: train.py [-h] [--valid-ref VALID_REF] [--lc-bleu] [--stop-on-cost]
+                  [--config CONFIG] --valid-freq VALID_FREQ
                   [--optimizer OPTIMIZER] [--learning-rate LEARNING_RATE]
-                  [--override-learning-rate] [--batch-size BATCH_SIZE]
-                  [--epochs EPOCHS] [--test-interval TEST_INTERVAL]
-                  [--test-count TEST_COUNT] [--keep-models KEEP_MODELS]
-                  [--patience PATIENCE] [--anneal-restarts ANNEAL_RESTARTS]
+                  [--override-learning-rate] --batch-max-words BATCH_MAX_WORDS
+                  --batch-max-sentences BATCH_MAX_SENTENCES [--epochs EPOCHS]
+                  [--test-interval TEST_INTERVAL] [--test-count TEST_COUNT]
+                  [--keep-models KEEP_MODELS] [--patience PATIENCE]
+                  [--anneal-restarts ANNEAL_RESTARTS]
                   [--anneal-decay ANNEAL_DECAY] [--max-words MAX_WORDS]
                   [--log-level LOG_LEVEL] [--log-file LOG_FILE]
                   [--max-train-duration MAX_TRAIN_DURATION]
@@ -82,6 +83,10 @@ Usage
 
   optional arguments:
     -h, --help            show this help message and exit
+    --valid-ref VALID_REF
+                          validation ref sentences for greedy BLEU
+    --lc-bleu             lowercase BLEU
+    --stop-on-cost        use cost for stopping criteria
     --config CONFIG       config json file; required for first run
     --valid-freq VALID_FREQ
                           (default: None)
@@ -91,8 +96,10 @@ Usage
                           defaults per optimizer
     --override-learning-rate
                           override learning rate from saved model
-    --batch-size BATCH_SIZE
-                          (default: 40)
+    --batch-max-words BATCH_MAX_WORDS
+                          (default: 4000)
+    --batch-max-sentences BATCH_MAX_SENTENCES
+                          (default: 200)
     --epochs EPOCHS       (default: 100)
     --test-interval TEST_INTERVAL
                           (default: 500)
@@ -106,7 +113,7 @@ Usage
     --anneal-decay ANNEAL_DECAY
                           (default: 0.5)
     --max-words MAX_WORDS
-                          (default: 50)
+                          discard long sentences (default: 50)
     --log-level LOG_LEVEL
                           (default: INFO)
     --log-file LOG_FILE   (default: model_dir/train.log)
@@ -123,15 +130,12 @@ After a typical run, the MODEL_DIR will looks like this::
   config.json
   model-iter-60000.npz
   training-state-model-iter-60000.json
-  adam-optimizer-model-iter-60000.npz
   model-iter-60000.npz.success
   model-iter-65000.npz
   training-state-model-iter-65000.json
-  adam-optimizer-model-iter-65000.npz
   model-iter-65000.npz.success
   model-iter-70000.npz
   training-state-model-iter-70000.json
-  adam-optimizer-model-iter-70000.npz
   model-iter-70000.npz.success
   train.log
   model.npz
@@ -141,13 +145,12 @@ epoch completes.  The models are named with the iteration number.
 Only the last ``keep_models`` models are kept since the sizes can be
 large.  A ``.success`` file is written after the model itself is
 written so the user can be sure training was not stopped in the middle
-of writing a model file.  For the Adam optimizer, an additional state
-file is saved which allows subsequent training runs to continue with
-the proper state of Adam parameters.  A training state file is also
-written with each model so that training can be restarted.
+of writing a model file.  A training state file is also written with
+each model so that training can be restarted.
 
-The iteration with the lowest validation score so far is kept as
-``model.npz``.
+The iteration with the best performance is kept as ``model.npz``.  If
+``--valid-ref`` is given performance is measured as the max greedy
+BLEU score.  Otherwise the minimum validation cost is used.
 
 When a training run is restarted, it uses the latest iteration files
 in the MODEL_DIR as a starting point.  The MODEL_DIR/config.json file
@@ -175,6 +178,7 @@ which looks like this:
 
 ::
 
+  [~/VistaMT]
   $ cat sample-config.json
   {
     "emb_dim": 512,
@@ -208,10 +212,12 @@ Example
 
 ::
 
+  [~/VistaMT]
   $ export PYTHONPATH=`pwd`
-  $ THEANO_FLAGS=device=cuda,floatX=float32 python train.py model_dir \
-  ro-en.en.bpe ro-en.ro.bpe ro-en-data/newsdev_head.ro ro-en-data/newsdev_head.ro \
-  --valid-freq 2000 --batch-size 80 --test-interval 50000 --config sample-config.json
+  $ python tools/train.py model_dir \
+  ro-en/train.ro ro-en/train.en ro-en/valid.ro ro-en/valid.en \
+  --valid-freq 2000 --batch-max-words 6000 --batch-max-sentences 200 \
+  --test-interval 50000 --config sample-config.json
 
 Training procedure
 ------------------
@@ -220,12 +226,18 @@ Training continues until ``epochs`` epochs are completed or an early
 stop is detected.
 
 During training, a ``bad_counter`` keeps track of the number of times
-the validation cost exceeds the minimum validation cost so far.  If
-this counter exceeds the ``patience`` threshold, the parameters are
-reset to the best ones found so far (the ones that produced the
-minimum validation cost) and the learning rate is reduced (by
-``anneal-decay``).  After this restarting happens ``anneal-restarts``
-times, if ``patience`` is exceeded again, training stops.
+the validation cost exceeds the minimum validation cost, or the number
+of times greedy BLEU is less than the best greedy BLEU, if
+``--valid-ref`` is passed.  If this counter exceeds the ``patience``
+threshold, the parameters are reset to the best ones found so far and
+the learning rate is reduced (by ``anneal-decay``).  After this
+restarting happens ``anneal-restarts`` times, if ``patience`` is
+exceeded again, training stops.
+
+Batching is done by grouping training examples by their length.  All
+batches are read into memory, then they are shuffled randomly on every
+epoch.  The batch size is variable, depending on the
+``--batch-max-words`` and ``--batch-max-sentences`` parameters.
 
 
 Prediction
@@ -260,7 +272,7 @@ Usage
                           use specific model instead of latest iter
     --log-level LOG_LEVEL
                           (default: INFO
-    --log-file LOG_FILE   (default: model_dir/predict.log)
+    --log-file LOG_FILE   (default: predict-{tgt}.log)
     --batch-greedy        greedy decode on batches of sentences at once
     --batch-size BATCH_SIZE
                           batch size for --batch-greedy (default: 80)
@@ -269,10 +281,6 @@ Prediction uses the latest iteration model file by default.  You can
 use the model with the best validation score by passing
 ``--model-filename model.npz``.
 
-The ``--batch-greedy`` option decodes at much faster speed but with
-reduced accuracy.  It performs a 1-best search instead of a beam
-search and is most useful for tasks such as back-translation.
-
 
 Example
 -------
@@ -280,5 +288,5 @@ Example
 ::
 
   [~/VistaMT]
-  $ THEANO_FLAGS=device=cuda,floatX=float32 python predict.py \
-  model_dir wmt17-preprocessed/newstest2017.bpe.ru newstest2017.bpe.en.predicted.out
+  $ python tools/predict.py model_dir \
+  wmt17-preprocessed/newstest2017.bpe.ru newstest2017.bpe.en.predicted.out
