@@ -4,10 +4,10 @@ from collections import OrderedDict
 
 
 class Vocab(object):
-    UNK = '<unk>'
-    SENT_START = '<s>'
     SENT_END ='</s>'
-    RESERVED = {UNK, SENT_START, SENT_END}
+    SENT_START = '<s>'
+    UNK = '<unk>'
+    RESERVED = {SENT_END, SENT_START, UNK}
 
     def __init__(self, sentences_paths=None, vocab_path=None):
         if sentences_paths and vocab_path:
@@ -23,9 +23,9 @@ class Vocab(object):
         self.unk_index = self._word2index.get(Vocab.UNK)
 
     def _from_sentences(self, sentences_paths):
-        self._words.append(Vocab.UNK)
+        self._words.append(Vocab.SENT_END) # SENT_END must have value 0
         self._words.append(Vocab.SENT_START)
-        self._words.append(Vocab.SENT_END)
+        self._words.append(Vocab.UNK)
         counts = OrderedDict()
         for path in sentences_paths:
             with open(path, 'r', encoding='utf8') as f:
@@ -65,22 +65,3 @@ class Vocab(object):
         with open(path, 'w', encoding='utf8') as f:
             for word in self._words:
                 print(word, file=f)
-
-
-if __name__ == '__main__':
-    vocab = Vocab(sentences_paths=[sys.argv[1]])
-    print(vocab.lookup(Vocab.SENT_START))
-    print(vocab.lookup(Vocab.SENT_END))
-    print(vocab.word_for_index(0))
-    print(vocab.lookup('than'))
-    print(vocab.word_for_index(6))
-    print(vocab.lookup('adsfdfd'))
-    print(vocab.word_for_index(vocab.unk_index))
-    vocab.write('vocab.txt')
-
-    vocab = Vocab(vocab_path='vocab.txt')
-    print(vocab.lookup(Vocab.SENT_START))
-    print(vocab.lookup(Vocab.SENT_END))
-    print(vocab.word_for_index(0))
-    print(vocab.lookup('than'))
-    print(vocab.word_for_index(6))

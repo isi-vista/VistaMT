@@ -8,6 +8,7 @@ import os
 import socket
 
 import sys
+import time
 
 from cnn.cnn_mt import CNMT
 from cnn.config import ModelConfiguration
@@ -35,7 +36,7 @@ def main():
     parser.add_argument('--log-level', default='INFO',
                         help='(default: %(default)s')
     parser.add_argument('--log-file',
-                        help='(default: model_dir/predict.log)')
+                        help='(default: predict-{tgt}.log)')
     parser.add_argument('--batch-greedy', action='store_true',
                         help='greedy decode on batches of sentences at once')
     parser.add_argument('--batch-size', type=int, default=80,
@@ -43,9 +44,13 @@ def main():
                              '(default: %(default)s)')
     args = parser.parse_args()
 
-    if not args.log_file:
-        args.log_file = os.path.join(args.model_dir, 'predict.log')
-    init_logging(args.log_file, args.log_level)
+    model_file = os.path.join(args.model_dir, args.model_filename) \
+        if args.model_filename else find_latest_model(args.model_dir)
+    log_file = args.log_file
+    if not log_file:
+        log_file = '{}.predict.log'.format(args.tgt)
+    init_logging(log_file, args.log_level)
+    log.info('command line args: {}'.format(args))
 
     config_path = os.path.join(args.model_dir, 'config.json')
     if not os.path.exists(config_path):
@@ -56,39 +61,27 @@ def main():
     x_vocab = Vocab(vocab_path=os.path.join(args.model_dir, 'x_vocab.txt'))
     y_vocab = Vocab(vocab_path=os.path.join(args.model_dir, 'y_vocab.txt'))
     cnmt = CNMT(x_vocab, y_vocab, config)
-    model_file = os.path.join(args.model_dir, args.model_filename) \
-        if args.model_filename else find_latest_model(args.model_dir)
     cnmt.load_params(model_file)
 
-    if args.batch_greedy:
-        batch_greedy_predict(cnmt, args.src, args.tgt, args.batch_size,
-                             args.max_words)
-    else:
-        with open(args.src, encoding='utf8') as src_f, \
-                open(args.tgt, 'w', encoding='utf8') as tgt_f:
-            predict(cnmt, src_f, tgt_f, args.beam_width, args.max_words)
+    if os.path.exists(args.tgt):
+        orig_path = args.tgt
+        args.tgt = orig_path + '.' + time.strftime('%Y%m%d%H%M%S')
+        log.warning('{} already exists, writing {} instead'.format(orig_path, args.tgt))
 
-
-def predict(cnmt, input_f, output_f, beam_width, max_words):
-    f_predict = cnmt.build_predictor()
-    log.info('begin prediction')
-    for sent in input_f:
-        sent = sent.rstrip()
-        sent = sent + ' ' + Vocab.SENT_END
-        x = [cnmt.x_vocab.lookup(w) for w in sent.split()]
-        sample, _ = f_predict(x, beam_width, max_words)
-        print(cnmt.y_vocab.words_for_indexes(sample), file=output_f)
-    log.info('end prediction')
-
-
-def batch_greedy_predict(cnmt, src, tgt, batch_size, max_words):
+    beam_width = 1 if args.batch_greedy else args.beam_width
+    log.info('building batch predictor, beam width {}'.format(beam_width))
     f_predict = cnmt.build_batch_predictor()
-    log.info('begin prediction')
+    batch_predict(cnmt, f_predict, args.src, args.tgt, args.batch_size,
+                  args.max_words, beam_width)
+
+
+def batch_predict(cnmt, f_predict, src, tgt, batch_size, max_words, beam_width):
+    log.info('begin batch prediction')
     batches = x_batch_generator(src, cnmt.x_vocab, batch_size, sys.maxsize)
     with open(tgt, 'w', encoding='utf8') as f:
         for x_in in batches:
             x, x_mask = x_prepare_data(x_in)
-            result = f_predict(x, x_mask, max_words)
+            result = f_predict(x, x_mask, max_words, beam_width)
             for sent in result:
                 print(cnmt.y_vocab.words_for_indexes(sent), file=f)
     log.info('end prediction')
