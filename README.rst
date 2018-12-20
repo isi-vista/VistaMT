@@ -140,13 +140,13 @@ After a typical run, the MODEL_DIR will looks like this::
   train.log
   model.npz
 
-Models are written to disk after every validation run and after every
-epoch completes.  The models are named with the iteration number.
-Only the last ``keep_models`` models are kept since the sizes can be
-large.  A ``.success`` file is written after the model itself is
-written so the user can be sure training was not stopped in the middle
-of writing a model file.  A training state file is also written with
-each model so that training can be restarted.
+Models are written to disk after every validation run.  The models are
+named with the iteration number.  Only the last ``keep_models`` models
+are kept since the sizes can be large.  A ``.success`` file is written
+after the model itself is written so the user can be sure training was
+not stopped in the middle of writing a model file.  A training state
+file is also written with each model so that training can be
+restarted.
 
 The iteration with the best performance is kept as ``model.npz``.  If
 ``--valid-ref`` is given performance is measured as the max greedy
@@ -154,7 +154,7 @@ BLEU score.  Otherwise the minimum validation cost is used.
 
 When a training run is restarted, it uses the latest iteration files
 in the MODEL_DIR as a starting point.  The MODEL_DIR/config.json file
-is a copy of the config file used when training begain.
+is a copy of the config file used when training began.
 
 Parameters like ``patience`` or ``epochs`` can be changed.  After a
 typical training run completes, you may indeed need to increase these
@@ -165,7 +165,7 @@ size since iteration numbers will change meaning.
 
 Learning rate can be changed on restart by passing both
 ``--learning-rate`` and ``override-learning-rate``.  The latter is a
-boolean flag that forces the provided learning rate to take effet.
+boolean flag that forces the provided learning rate to take effect.
 The default behavior is to take learning rate from the saved model
 state, since the learning rate is adjusted automatically during a
 typical training run.
