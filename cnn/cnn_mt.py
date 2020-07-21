@@ -1,77 +1,89 @@
-import glob
-import logging
 import os
-import tarfile
+import tensorflow as tf
 import numpy as np
 
-from cnn.cnmt import CNMT_1
+from cnn.beam_search import BeamSearch
+from cnn.decoder import Decoder
+from cnn.encoder import Encoder
 
-log = logging.getLogger(__name__)
-log.addHandler(logging.NullHandler())
 
 _RANDOM_SEED = 1234
 np.random.seed(_RANDOM_SEED)
 
+DEFAULT_LEARNING_RATE = 0.0002
+MAX_GRAD_NORM = 0.25
 
-class CNMT(object):
-    def __init__(self, x_vocab, y_vocab, config):
+# Tensorflow will try to use all cores if it doesn't have a GPU.  If
+# you forget to reserve one, you might not realize why things are so
+# slow.  Detect this early.  If you really mean to use CPU, set the
+# environment variable CNN_USE_CPU=1.
+if 'CNN_USE_CPU' not in os.environ:
+    if not tf.config.list_physical_devices('GPU'):
+        raise RuntimeError('No CUDA GPU available.  To force CPU, set CNN_USE_CPU in environment')
+
+
+class ConvolutionalMT:
+    def __init__(self, config, x_vocab, y_vocab):
         self.x_vocab = x_vocab
         self.y_vocab = y_vocab
-        self.cnmt = CNMT_1(config, x_vocab, y_vocab)
-        log.info('ModelConfiguration: %s', config.to_json())
+        emb_dim = config.emb_dim
+        encoder_arch = config.encoder_arch
+        decoder_arch = config.decoder_arch
+        out_emb_dim = config.out_emb_dim
+        dropout_rate = config.dropout_rate
+        num_dec_layers = 0
+        for a in config.decoder_arch:
+            num_dec_layers += a[0]
+        self.encoder = Encoder(x_vocab.size(), emb_dim, encoder_arch, dropout_rate, num_dec_layers)
+        self.decoder = Decoder(y_vocab.size(), emb_dim, out_emb_dim, decoder_arch, dropout_rate)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=DEFAULT_LEARNING_RATE)
+        self.beam_search = BeamSearch(self.encoder, self.decoder, y_vocab)
+        self.checkpoint = tf.train.Checkpoint(optimizer=self.optimizer, encoder=self.encoder,
+                                              decoder=self.decoder)
 
-    def load_params(self, filename):
-        log.info('Loading params from {}'.format(filename))
-        tar_filename = filename
-        tf_name = None
-        with tarfile.open(tar_filename, 'r') as tar:
-            for name in tar.getnames():
-                i = name.find('.npz')
-                if i > 0:
-                    tf_name = os.path.join(os.path.dirname(filename), name[:i + 4])
-                    log.info('Found tf model name inside tar: {}'.format(tf_name))
-                    break
-            tar.extractall(os.path.dirname(tar_filename))
-        self.cnmt.load_params(tf_name)
-        log.info('END Loading params')
+    def load_params(self, file_prefix, expect_partial=False):
+        if expect_partial:
+            self.checkpoint.restore(file_prefix).expect_partial()
+        else:
+            self.checkpoint.restore(file_prefix)
 
-    def save_params(self, filename):
-        log.info('Saving params to {}'.format(filename))
-        self.cnmt.save_params(filename)
-        tar_filename = filename
-        with tarfile.open(tar_filename, 'w') as tar:
-            paths = glob.glob(filename + '.*')
-            for path in paths:
-                tar.add(path, arcname=os.path.basename(path))
-        for path in paths:
-            os.remove(path)
-        log.info('END Saving params')
+    def save_params(self, file_prefix):
+        self.checkpoint.write(file_prefix)
 
-    def build_trainer(self, optimizer):
-        def train(x_, x_mask_, y_lshifted_, y_rshifted_, y_mask_, lr_):
-            self.cnmt.set_learning_rate(lr_)
-            return self.cnmt.train(x_, x_mask_, y_lshifted_, y_rshifted_, y_mask_)
+    def set_learning_rate(self, learning_rate):
+        self.optimizer.learning_rate = learning_rate
 
-        def compute_cost(x_, x_mask_, y_lshifted_, y_rshifted_, y_mask_):
-            return self.cnmt.get_cost(x_, x_mask_, y_lshifted_, y_rshifted_, y_mask_)
+    @tf.function(input_signature=(tf.TensorSpec((None, None), dtype=tf.int32),
+                                  tf.TensorSpec((None, None), dtype=tf.float32),
+                                  tf.TensorSpec((None, None), dtype=tf.int32),
+                                  tf.TensorSpec((None, None), dtype=tf.float32)))
+    def train(self, x, x_mask, y, y_mask):
+        with tf.GradientTape() as tape:
+            ctx, ctx_plus_emb = self.encoder([x, x_mask], training=True)
+            y_out, _ = self.decoder([y[:, :-1], ctx, ctx_plus_emb, x_mask, None], training=True)
+            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y[:, 1:], logits=y_out)
+            loss = loss * y_mask
+            loss = tf.reduce_sum(loss) / tf.reduce_sum(y_mask)
+            variables = self.encoder.trainable_variables + self.decoder.trainable_variables
+            gradients = tape.gradient(loss, variables)
+            gradients = [tf.clip_by_norm(grad, MAX_GRAD_NORM) for grad in gradients]
+            self.optimizer.apply_gradients(zip(gradients, variables))
+            return loss
 
-        def predict(x_, max_words_):
-            x = [x_]
-            x_mask = np.ones_like(x)
-            return self.cnmt.predict(x, x_mask, max_words_, 1)[0], 0
+    def predict(self, x, x_mask, maxlen, beam_size):
+        return self.beam_search.predict(x, x_mask, maxlen, beam_size)
 
-        return train, compute_cost, predict
+    def predict_n(self, x, x_mask, maxlen, beam_size):
+        return self.beam_search.predict_n(x, x_mask, maxlen, beam_size)
 
-    def build_predictor(self):
-        def predict(x_, beam_width, max_words):
-            x = [x_]
-            x_mask = np.ones_like(x)
-            return self.cnmt.predict(x, x_mask, max_words, beam_width)[0], 0
-
-        return predict
-
-    def build_batch_predictor(self):
-        def predict(x, x_mask, max_words, beam_width=1):
-            return self.cnmt.predict(x, x_mask, max_words, beam_width)
-
-        return predict
+    @tf.function(input_signature=(tf.TensorSpec((None, None), dtype=tf.int32),
+                                  tf.TensorSpec((None, None), dtype=tf.float32),
+                                  tf.TensorSpec((None, None), dtype=tf.int32),
+                                  tf.TensorSpec((None, None), dtype=tf.float32)))
+    def get_cost(self, x, x_mask, y, y_mask):
+        ctx, ctx_plus_emb = self.encoder([x, x_mask], training=False)
+        y_out, _ = self.decoder([y[:, :-1], ctx, ctx_plus_emb, x_mask, None], training=False)
+        cost = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y[:, 1:], logits=y_out)
+        cost = cost * y_mask
+        cost = tf.reduce_sum(cost) / tf.reduce_sum(y_mask)
+        return cost

@@ -11,26 +11,33 @@ import tempfile
 
 import numpy as np
 import os
+import psutil
 import re
 import shutil
 import socket
 import time
-import math
 
 from numpy.random.mtrand import RandomState
 
-from cnn.data_utils import Dataset
+from cnn import compat
+from cnn.cnn_mt import ConvolutionalMT, DEFAULT_LEARNING_RATE
+from cnn.data_utils import XYDataset, XDataset
 from cnn.model_dir_utils import sorted_model_files, find_latest_model, MODEL_PREFIX, \
-    model_iter_from_path
+    model_iter_from_path, copy_checkpoint, path_to_checkpoint, checkpoint_to_paths, \
+    TRAINING_STATE_SUFFIX, SUCCESS_SUFFIX
 from cnn.config import ModelConfiguration
-from cnn.cnn_mt import CNMT
 from cnn.logging_utils import init_logging
-from cnn.optimizers import get_optimizer
 from cnn.vocab import Vocab
 from tools.predict import batch_predict
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
+
+
+def used_memory_in_gigabytes():
+    process = psutil.Process(os.getpid())
+    nbytes = process.memory_info().rss
+    return nbytes / (1024 * 1024 * 1024)
 
 
 def main():
@@ -50,10 +57,8 @@ def main():
                         help='config json file; required for first run')
     parser.add_argument('--valid-freq', required=True, type=int,
                         help='(default: %(default)s)')
-    parser.add_argument('--optimizer', default='adam',
+    parser.add_argument('--learning-rate', type=float, default=DEFAULT_LEARNING_RATE,
                         help='(default: %(default)s)')
-    parser.add_argument('--learning-rate', type=float,
-                        help='defaults per optimizer')
     parser.add_argument('--override-learning-rate', action='store_true',
                         help='override learning rate from saved model')
     parser.add_argument('--batch-max-words', type=int, required=True, default=4000,
@@ -93,13 +98,13 @@ def main():
     init_logging(args.log_file, args.log_level)
     log.info('command line args: {}'.format(args))
 
-    init_vocab([args.train_src, args.valid_src],
+    init_vocab([args.train_src],
                os.path.join(args.model_dir, 'x_vocab.txt'))
-    init_vocab([args.train_tgt, args.valid_tgt],
+    init_vocab([args.train_tgt],
                os.path.join(args.model_dir, 'y_vocab.txt'))
 
     test_sentences = []
-    with open(args.valid_src) as f:
+    with open(args.valid_src, encoding='utf8') as f:
         for i, line in enumerate(f):
             if i == args.test_count:
                 break
@@ -137,11 +142,10 @@ def main():
         max_seconds = int(max_seconds)
         logging.info('Will exit training after {} seconds'.format(max_seconds))
 
-    optimizer = get_optimizer(args.optimizer)
-    learning_rate = args.learning_rate or optimizer.DEFAULT_LEARNING_RATE
+    learning_rate = args.learning_rate
     stop_on_cost = args.stop_on_cost or args.valid_ref is None
 
-    train(config, optimizer, args.model_dir, args.train_src, args.train_tgt,
+    train(config, args.model_dir, args.train_src, args.train_tgt,
           args.valid_src, args.valid_tgt, args.batch_max_words, args.batch_max_sentences,
           args.epochs, test_sentences, args.test_interval, args.valid_freq,
           args.keep_models, args.patience, args.max_words,
@@ -153,8 +157,6 @@ def main():
 class TrainingState:
     def __init__(self):
         self.completed_epochs = 0
-        self.epoch_examples_seen = 0
-        self.epoch_cost = 0.0
         self.training_iteration = 0
         self.bad_counter = 0
         self.validation_costs = []
@@ -165,10 +167,8 @@ class TrainingState:
 
     @staticmethod
     def path_for_model(model_path):
-        filename = os.path.basename(model_path)
-        filename = re.sub(r'\.npz$', '.json', filename)
-        return os.path.join(
-            os.path.dirname(model_path), 'training-state-{}'.format(filename))
+        model_path = path_to_checkpoint(model_path)
+        return model_path + TRAINING_STATE_SUFFIX
 
     def to_json(self, train_seconds=None, **kwargs):
         d = dict(vars(self))
@@ -200,10 +200,9 @@ class TrainingState:
         return json.dumps(d, indent=2)
 
 
-def compute_greedy_bleu(cnmt, f_predict, valid_src, valid_ref, lc_bleu,
-                        batch_max_words, max_words):
+def compute_greedy_bleu(cnn_mt, valid_dataset, valid_ref, lc_bleu, max_words):
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf8') as tf:
-        batch_predict(cnmt, f_predict, valid_src, tf.name, batch_max_words, max_words, beam_width=1)
+        batch_predict(cnn_mt, valid_dataset, tf.name, max_words, beam_size=1)
         cmd = [os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             'scripts', 'score.sh'),
                valid_ref, tf.name]
@@ -227,7 +226,7 @@ def compute_greedy_bleu(cnmt, f_predict, valid_src, valid_ref, lc_bleu,
         return bleu, bleu_line
 
 
-def train(config, optimizer, model_dir, train_src, train_tgt, valid_src,
+def train(config, model_dir, train_src, train_tgt, valid_src,
           valid_tgt, batch_max_words, batch_max_sentences, epochs, test_sentences,
           test_interval, valid_freq, keep_models, patience, max_words, learning_rate,
           max_seconds, exit_status_max_train, anneal_restarts, anneal_decay,
@@ -236,13 +235,13 @@ def train(config, optimizer, model_dir, train_src, train_tgt, valid_src,
     state = TrainingState()
     state.learning_rate = learning_rate
     log.info('hostname: %s', socket.gethostname())
-    log.info('optimizer: %s', optimizer.__class__.__qualname__)
     x_vocab = Vocab(vocab_path=os.path.join(model_dir, 'x_vocab.txt'))
     y_vocab = Vocab(vocab_path=os.path.join(model_dir, 'y_vocab.txt'))
-    cnmt = CNMT(x_vocab, y_vocab, config)
+
+    cnn_mt = ConvolutionalMT(config, x_vocab, y_vocab)
     model_file = find_latest_model(model_dir)
     if model_file:
-        cnmt.load_params(model_file)
+        compat.load_params(cnn_mt, model_file)
         state_path = state.path_for_model(model_file)
         if os.path.exists(state_path):
             state.load(state_path)
@@ -257,64 +256,64 @@ def train(config, optimizer, model_dir, train_src, train_tgt, valid_src,
         else:
             log.warning('no training state file found for model!')
             state.training_iteration = model_iter_from_path(model_file)
-        optimizer_path = optimizer.path_for_model(model_file)
-        if os.path.exists(optimizer_path):
-            optimizer.load(optimizer_path)
     log.info('TrainingState: {}'.format(state.format_for_log()))
     log.info('using {} for stopping criteria'.format('cost' if stop_on_cost else 'bleu'))
-    log.info('building trainer...')
-    f_train, f_compute_cost, f_sample = cnmt.build_trainer(optimizer)
-    log.info('building batch predictor...')
-    f_predict = cnmt.build_batch_predictor()
 
     next_test_cycle = test_interval
     early_stop = False
     train_seconds = state.total_train_seconds
 
-    log.info('preparing training batches...')
-    train_dataset = Dataset(train_src, train_tgt, x_vocab, y_vocab, max_words)
-    log.info('preparing validation batches...')
-    valid_dataset = Dataset(valid_src, valid_tgt, x_vocab, y_vocab, max_words)
-    log.info('starting train loop...')
-
     # Get a different random state to avoid seeing the same shuffled batches
     # on restart.  We want to see different data, especially for large datasets.
     random_state = RandomState()
 
+    log.info('preparing training batches...')
+    train_dataset = XYDataset(train_src, train_tgt, x_vocab, y_vocab,
+                              max_words_per_sentence=max_words,
+                              max_words_per_batch=batch_max_words,
+                              max_sentences_per_batch=batch_max_sentences,
+                              random_state=random_state)
+    log.info('preparing validation batches...')
+    valid_xy_dataset = XYDataset(valid_src, valid_tgt, x_vocab, y_vocab,
+                                 max_words_per_sentence=max_words,
+                                 max_words_per_batch=batch_max_words,
+                                 max_sentences_per_batch=batch_max_sentences,
+                                 random_state=None)
+    valid_x_dataset = XDataset(valid_src, x_vocab, max_words_per_batch=batch_max_words,
+                               max_sentences_per_batch=batch_max_sentences)
+
+    log.info('starting train loop...')
+    log.info('process memory at start of train loop: {:.2f} GB'.format(
+        used_memory_in_gigabytes()))
+
     while state.completed_epochs < epochs:
-        batches = train_dataset.iterator(batch_max_words, batch_max_sentences,
-                                         random_state)
-        for batch in batches:
-            x, x_mask, y_lshifted, y_rshifted, y_mask = batch
+        epoch_cost = 0
+        for batch in train_dataset():
+            x, x_mask, y, y_mask = batch
             elapsed = time.time() - start
             if max_seconds and elapsed > max_seconds:
                 log.info('%d seconds elapsed in train()', elapsed)
                 log.info('exiting with status %d', exit_status_max_train)
                 exit(exit_status_max_train)
             state.training_iteration += 1
-            state.epoch_examples_seen += x.shape[0]
-            batch_cost = f_train(x, x_mask, y_lshifted, y_rshifted,
-                                 y_mask, state.learning_rate)
-            if math.isnan(batch_cost) or math.isinf(batch_cost):
-                # Hope that previous model is free of NaNs so we can restart from there.
-                log.warning('invalid cost: {}'.format(batch_cost))
-                log.info('exiting with status %d', exit_status_max_train)
-                exit(exit_status_max_train)
-            state.epoch_cost += batch_cost
+
+            cnn_mt.set_learning_rate(state.learning_rate)
+            batch_cost = cnn_mt.train(x, x_mask, y, y_mask)
+
+            epoch_cost += batch_cost
             next_test_cycle -= 1
             if next_test_cycle == 0:
-                test(f_sample, x_vocab, y_vocab, test_sentences, max_words)
+                test(cnn_mt, x_vocab, y_vocab, test_sentences, max_words)
                 next_test_cycle = test_interval
             if state.training_iteration % valid_freq == 0:
                 log.info('BEGIN Validating')
-                valid_batches = valid_dataset.iterator(batch_max_words, batch_max_sentences, None)
-                valid_cost = dataset_cost(f_compute_cost, valid_batches)
+                valid_cost = dataset_cost(cnn_mt, valid_xy_dataset)
                 state.validation_costs.append(float(valid_cost))
                 new_best = False
                 bleu, bleu_s, max_bleu_s = -1.0, '?????', '?????'
                 if valid_ref:
-                    bleu, bleu_line = compute_greedy_bleu(cnmt, f_predict, valid_src, valid_ref,
-                                                          lc_bleu, batch_max_words, max_words)
+                    bleu, bleu_line = compute_greedy_bleu(cnn_mt, valid_x_dataset, valid_ref,
+                                                          lc_bleu, max_words)
                     log.info(bleu_line)
                     state.validation_bleus.append(bleu)
                     bleu_s = '{:05.2f}'.format(bleu)
@@ -334,12 +333,12 @@ def train(config, optimizer, model_dir, train_src, train_tgt, valid_src,
                           '-lc' if lc_bleu else '', bleu_s, max_bleu_s, valid_cost,
                           min(state.validation_costs), state.bad_counter, state.learning_rate,
                           state.training_iteration, ts))
-                model_src = save_model(cnmt, optimizer, model_dir, keep_models, state,
+                model_src = save_model(cnn_mt, model_dir, keep_models, state,
                                        train_seconds + int(time.time() - start))
                 if new_best:
-                    log.info('New best model; saving model.npz')
-                    model_dst = os.path.join(model_dir, 'model.npz')
-                    shutil.copyfile(model_src, model_dst)
+                    log.info('New best model; saving model')
+                    model_dst = os.path.join(model_dir, 'model')
+                    copy_checkpoint(model_src, model_dst)
                 else:
                     state.bad_counter += 1
                     if state.bad_counter > patience:
@@ -350,9 +349,8 @@ def train(config, optimizer, model_dir, train_src, train_tgt, valid_src,
                             log.info('new learning rate: {:f}'.format(state.learning_rate))
                             state.anneal_restarts_done += 1
                             state.bad_counter = 0
-                            best_model_path = os.path.join(model_dir, 'model.npz')
-                            if os.path.exists(best_model_path):
-                                cnmt.load_params(best_model_path)
+                            best_model_path = os.path.join(model_dir, 'model')
+                            compat.load_params(cnn_mt, best_model_path)
                         else:
                             log.info('Early Stop!')
                             early_stop = True
@@ -362,9 +360,11 @@ def train(config, optimizer, model_dir, train_src, train_tgt, valid_src,
             # jobs from executing.
             exit(1)
         state.completed_epochs += 1
-        log.info('epoch %d, epoch cost %f', state.completed_epochs, state.epoch_cost)
-        state.epoch_examples_seen = 0
-        state.epoch_cost = 0
+        log.info('epoch %d, epoch cost %f', state.completed_epochs, epoch_cost)
+        log.info('process memory at end of epoch: {:.2f} GB'.format(
+            used_memory_in_gigabytes()))
+    log.info('process memory at end of training: {:.2f} GB'.format(
+        used_memory_in_gigabytes()))
     log.info('training ends')
 
 
@@ -381,68 +381,62 @@ def get_examples_per_epoch(batches):
     return sum([len(x) for x, _ in batches])
 
 
-def test(fast_predict, x_vocab, y_vocab, test_sentences, max_words):
+def test(cnn_mt, x_vocab, y_vocab, test_sentences, max_words):
     log.info('BEGIN test sentences')
     for sent in test_sentences:
         log.info('%s', sent)
         sent = sent + ' ' + Vocab.SENT_END
         x = [x_vocab.lookup(w) for w in sent.split()]
-        sample, cost = fast_predict(x, max_words)
+        batch_x = [x]
+        batch_x_mask = np.ones_like(batch_x)
+        sample = cnn_mt.predict(batch_x, batch_x_mask, max_words, 1)[0]
         log.info('%s', y_vocab.words_for_indexes(sample))
         log.info('')
     log.info('END   test sentences')
 
 
-def dataset_cost(f_compute_cost, batch_iterator):
+def dataset_cost(cnn_mt, dataset):
     batch_costs = []
-    for b in batch_iterator:
-        x, x_mask, y_lshifted, y_rshifted, y_mask = b
-        batch_cost = f_compute_cost(x, x_mask, y_lshifted, y_rshifted,
-                                    y_mask)
+    for batch in dataset():
+        x, x_mask, y, y_mask = batch
+        batch_cost = cnn_mt.get_cost(x, x_mask, y, y_mask)
         batch_costs.append(batch_cost)
     return np.mean(batch_costs)
 
 
-def save_model(cnmt, optimizer, model_dir, keep_models, state, train_seconds):
+def save_model(cnn_mt, model_dir, keep_models, state, train_seconds):
     model_path = get_model_path(model_dir, state.training_iteration)
     log.info('BEGIN Saving model')
-    cnmt.save_params(model_path)
+    compat.save_params(cnn_mt, model_path)
     state.save(state.path_for_model(model_path), train_seconds)
-    optimizer.save(optimizer.path_for_model(model_path))
-
-    # clean all but last `keep_models` models
-    paths = sorted_model_files(model_dir)
-    for i in range(len(paths) - keep_models):
-        if os.path.exists(paths[i]):
-            log.info('removing %s', paths[i])
-            os.remove(paths[i])
-        flag_path = paths[i] + '.success'
-        if os.path.exists(flag_path):
-            log.info('removing %s', flag_path)
-            os.remove(flag_path)
-        state_path = state.path_for_model(paths[i])
-        if os.path.exists(state_path):
-            log.info('removing %s', state_path)
-            os.remove(state_path)
-        optimizer_path = optimizer.path_for_model(paths[i])
-        if os.path.exists(optimizer_path):
-            log.info('removing %s', optimizer_path)
-            os.remove(optimizer_path)
 
     # flag file so we know we didn't get killed in the middle of
-    # writing a model file
-    model_success_flag = model_path + '.success'
+    # writing a model
+    model_success_flag = model_path + SUCCESS_SUFFIX
     log.info('writing flag file: %s', model_success_flag)
     # noinspection PyUnusedLocal
     with open(model_success_flag, 'w') as f:
         pass
+
+    # tensorflow Saver can manage delete of old checkpoints with max_to_keep,
+    # but it seems to have issues on restarts so we do it ourselves.  We also
+    # have to clean up associated state files.
+
+    # clean all but last `keep_models` models
+    paths = sorted_model_files(model_dir)
+    for i in range(len(paths) - keep_models):
+        prefix = paths[i]
+        for path in checkpoint_to_paths(prefix):
+            if os.path.exists(path):
+                log.info('removing %s', path)
+                os.remove(path)
 
     log.info('END Saving model')
     return model_path
 
 
 def get_model_path(model_dir, iteration):
-    return os.path.join(model_dir, '{}{}.npz'.format(MODEL_PREFIX, iteration))
+    return os.path.join(model_dir, '{}{}'.format(MODEL_PREFIX, iteration))
 
 
 if __name__ == '__main__':
