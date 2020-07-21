@@ -1,3 +1,4 @@
+import argparse
 import sys
 import operator
 from collections import OrderedDict
@@ -9,20 +10,20 @@ class Vocab(object):
     UNK = '<unk>'
     RESERVED = {SENT_END, SENT_START, UNK}
 
-    def __init__(self, sentences_paths=None, vocab_path=None):
+    def __init__(self, sentences_paths=None, vocab_path=None, min_words=1):
         if sentences_paths and vocab_path:
             raise ValueError('cannot pass both sentences_paths and vocab_path')
         self._words = []
         self._word2index = {}
         if sentences_paths:
-            self._from_sentences(sentences_paths)
+            self._from_sentences(sentences_paths, min_words)
         elif vocab_path:
             self._from_vocab_file(vocab_path)
         else:
             raise ValueError('must pass one of sentences_paths or vocab_path')
         self.unk_index = self._word2index.get(Vocab.UNK)
 
-    def _from_sentences(self, sentences_paths):
+    def _from_sentences(self, sentences_paths, min_words):
         self._words.append(Vocab.SENT_END) # SENT_END must have value 0
         self._words.append(Vocab.SENT_START)
         self._words.append(Vocab.UNK)
@@ -36,9 +37,8 @@ class Vocab(object):
                                 counts[word] = 1
                             else:
                                 counts[word] += 1
-        sorted_items = sorted(counts.items(), key=operator.itemgetter(1),
-                              reverse=True)
-        self._words.extend([x[0] for x in sorted_items])
+        sorted_items = sorted(counts.items(), key=lambda x: (-x[1], x[0]))
+        self._words.extend([x[0] for x in sorted_items if x[1] >= min_words])
         for i, word in enumerate(self._words):
             self._word2index[word] = i
 
@@ -65,3 +65,16 @@ class Vocab(object):
         with open(path, 'w', encoding='utf8') as f:
             for word in self._words:
                 print(word, file=f)
+
+    def __eq__(self, other):
+        return self._words == other._words and self._word2index == other._word2index
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('sentences_path', help='paths to tokenized sentences')
+    parser.add_argument('output_path', help='output path')
+    parser.add_argument('--min-words', type=int, default=1)
+    args = parser.parse_args()
+    vocab = Vocab([args.sentences_path], min_words=args.min_words)
+    vocab.write(args.output_path)

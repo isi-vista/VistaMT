@@ -2,37 +2,55 @@ from math import sqrt
 import tensorflow as tf
 
 
-def embedding(name, layer_in, voc_size, dim, scale=0.1):
-    with tf.variable_scope(name):
-        e = tf.get_variable('e', shape=(voc_size, dim),
-                            initializer=tf.random_normal_initializer(stddev=scale))
-        return tf.nn.embedding_lookup(e, layer_in)
+class Embedding(tf.keras.layers.Layer):
+    def __init__(self, voc_size, dim, scale=0.1):
+        super(Embedding, self).__init__()
+        initializer = tf.keras.initializers.TruncatedNormal(stddev=scale)
+        self.e = tf.Variable(initializer(shape=(voc_size, dim)), trainable=True)
+
+    def call(self, inputs, **kwargs):
+        return tf.nn.embedding_lookup(self.e, inputs)
 
 
-def linear(name, layer_in, d_in, d_out, dropout=0):
-    with tf.variable_scope(name):
-        std_w = sqrt((1.0 - dropout) / d_in)
-        w = tf.get_variable('w', shape=(d_in, d_out),
-                            initializer=tf.random_normal_initializer(stddev=std_w))
-        b = tf.get_variable('b', shape=(d_out,),
-                            initializer=tf.zeros_initializer())
-        return tf.tensordot(layer_in, w, axes=1) + b
+class Linear(tf.keras.layers.Layer):
+    def __init__(self, d_in, d_out, dropout_rate=0.):
+        super(Linear, self).__init__()
+        std_w = sqrt((1.0 - dropout_rate) / d_in)
+        v_init = tf.keras.initializers.TruncatedNormal(stddev=std_w)
+        self.v = tf.Variable(v_init(shape=(d_in, d_out)), trainable=True)
+        self.g = tf.Variable(tf.norm(self.v, ord=2, axis=0), trainable=True)
+        b_init = tf.zeros_initializer()
+        self.b = tf.Variable(b_init(shape=(d_out,)), trainable=True)
+
+    def call(self, inputs, **kwargs):
+        v_norm = tf.norm(self.v, ord=2, axis=0)
+        w = (self.g / v_norm) * self.v
+        return tf.tensordot(inputs, w, axes=1) + self.b
 
 
-def conv_glu(name, layer_in, width, dim, padding, dropout):
-    with tf.variable_scope(name):
-        std_w = sqrt((4.0 * (1.0 - dropout)) / (dim * width))
-        w = tf.get_variable('w', shape=(width, dim, dim),
-                            initializer=tf.random_normal_initializer(stddev=std_w))
-        b = tf.get_variable('b', shape=(dim,),
-                            initializer=tf.zeros_initializer())
-        wg = tf.get_variable('wg', shape=(width, dim, dim),
-                             initializer=tf.random_normal_initializer(stddev=std_w))
-        bg = tf.get_variable('bg', shape=(dim,),
-                             initializer=tf.zeros_initializer())
-        # convolve input
-        block_out = tf.nn.conv1d(layer_in, w, stride=1, padding=padding) + b
-        # compute gate activations
-        gate_out = tf.nn.conv1d(layer_in, wg, stride=1, padding=padding) + bg
-        # apply gates to outputs
+class ConvGLU(tf.keras.layers.Layer):
+    def __init__(self, width, dim, padding, dropout_rate):
+        super(ConvGLU, self).__init__()
+        self.width = width
+        self.dim = dim
+        self.padding = padding
+        std_w = sqrt((4.0 * (1.0 - dropout_rate)) / (dim * width))
+        v_init = tf.keras.initializers.TruncatedNormal(stddev=std_w)
+        self.v = tf.Variable(v_init(shape=(width, dim, dim)), trainable=True)
+        self.g = tf.Variable(tf.norm(tf.reshape(self.v, (dim * width, dim)), ord=2, axis=0),
+                             trainable=True)
+        b_init = tf.zeros_initializer()
+        self.b = tf.Variable(b_init(shape=(dim,)), trainable=True)
+        self.vg = tf.Variable(v_init(shape=(width, dim, dim)), trainable=True)
+        self.gg = tf.Variable(tf.norm(tf.reshape(self.v, (dim * width, dim)), ord=2, axis=0),
+                              trainable=True)
+        self.bg = tf.Variable(b_init(shape=(dim,)), trainable=True)
+
+    def call(self, inputs, **kwargs):
+        v_norm = tf.norm(tf.reshape(self.v, (self.dim * self.width, self.dim)), ord=2, axis=0)
+        w = (self.g / v_norm) * self.v
+        vg_norm = tf.norm(tf.reshape(self.vg, (self.dim * self.width, self.dim)), ord=2, axis=0)
+        wg = (self.gg / vg_norm) * self.vg
+        block_out = tf.nn.conv1d(inputs, w, stride=1, padding=self.padding) + self.b
+        gate_out = tf.nn.conv1d(inputs, wg, stride=1, padding=self.padding) + self.bg
         return block_out * tf.sigmoid(gate_out)

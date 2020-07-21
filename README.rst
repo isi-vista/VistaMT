@@ -14,7 +14,7 @@ ISI's convolutional sequence-to-sequence software for machine translation.
 Requirements
 ============
 
-* Python3, numpy, tensorflow
+* Python3, tensorflow, putil
 * cuda, cudnn
 
 Tested configuration
@@ -22,31 +22,27 @@ Tested configuration
 
 ::
 
-  $ python -V
-  Python 3.6.7 :: Anaconda, Inc.
+  # conda tensorflow-gpu currently has trouble finding cuda ptxas so
+  # we use a mixture of conda and pip, and spack to get cuda and cudnn
 
-  $ pip freeze | egrep -i 'numpy|tensorflow'
-  numpy==1.15.4
-  tensorflow-gpu==1.12.0
+  $ conda create -p ./venv python=3.6 pip
+  $ conda activate ./venv
+  $ pip install -r requirements.txt
+  $ spack load cuda@10.1.243
+  $ spack load cudnn@7.6.5.32-10.2-linux-x64
 
   $ nvidia-smi | grep Driver
-  | NVIDIA-SMI 390.48                 Driver Version: 390.48
+  | NVIDIA-SMI 440.44       Driver Version: 440.44       CUDA Version: 10.2     |
 
-Also:
+If you install cuda/cudnn manually, you will need something like this at runtime:
 
-* cuda-9.0
-
-* cudnn-9.0-linux-x64-v7.4.1.5
-
-Example CUDA/cuDNN setup::
-
-  CUDA_HOME=/usr/local/cuda-9.0
-  CUDNN_HOME=/usr/local/cudnn-9.0-linux-x64-v7.4.1.5
-  export PATH=$CUDA_HOME/bin:$PATH
-  export CPATH="$CUDNN_HOME/cuda/include:$CUDA_HOME/include:$CPATH"
-  export LD_LIBRARY_PATH="$CUDNN_HOME/cuda/lib64/:$LD_LIBRARY_PATH"
-  export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
-  export LIBRARY_PATH=$LD_LIBRARY_PATH
+-  CUDA_HOME=/path/to/cuda-10.1
+-  CUDNN_HOME=/path/to/cudnn-7.6
+-  export PATH=$CUDA_HOME/bin:$PATH
+-  export CPATH="$CUDNN_HOME/cuda/include:$CUDA_HOME/include:$CPATH"
+-  export LD_LIBRARY_PATH="$CUDNN_HOME/cuda/lib64/:$LD_LIBRARY_PATH"
+-  export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
+-  export LIBRARY_PATH=$LD_LIBRARY_PATH
 
 
 Training
@@ -62,9 +58,9 @@ Usage
   $ tools/train.py -h
   usage: train.py [-h] [--valid-ref VALID_REF] [--lc-bleu] [--stop-on-cost]
                   [--config CONFIG] --valid-freq VALID_FREQ
-                  [--optimizer OPTIMIZER] [--learning-rate LEARNING_RATE]
-                  [--override-learning-rate] --batch-max-words BATCH_MAX_WORDS
-                  --batch-max-sentences BATCH_MAX_SENTENCES [--epochs EPOCHS]
+                  [--learning-rate LEARNING_RATE] [--override-learning-rate]
+                  --batch-max-words BATCH_MAX_WORDS --batch-max-sentences
+                  BATCH_MAX_SENTENCES [--epochs EPOCHS]
                   [--test-interval TEST_INTERVAL] [--test-count TEST_COUNT]
                   [--keep-models KEEP_MODELS] [--patience PATIENCE]
                   [--anneal-restarts ANNEAL_RESTARTS]
@@ -90,10 +86,8 @@ Usage
     --config CONFIG       config json file; required for first run
     --valid-freq VALID_FREQ
                           (default: None)
-    --optimizer OPTIMIZER
-                          (default: adam)
     --learning-rate LEARNING_RATE
-                          defaults per optimizer
+                          (default: 0.0002)
     --override-learning-rate
                           override learning rate from saved model
     --batch-max-words BATCH_MAX_WORDS
@@ -251,10 +245,11 @@ Usage
   [~/VistaMT]
   $ export PYTHONPATH=`pwd`
   $ tools/predict.py -h
-  usage: predict.py [-h] [--beam-width BEAM_WIDTH] [--max-words MAX_WORDS]
+  usage: predict.py [-h] [--beam-size BEAM_SIZE] [--max-words MAX_WORDS]
                     [--model-filename MODEL_FILENAME] [--log-level LOG_LEVEL]
                     [--log-file LOG_FILE] [--batch-greedy]
                     [--batch-size BATCH_SIZE]
+                    [--batch-max-words BATCH_MAX_WORDS] [--nbest]
                     model_dir src tgt
 
   positional arguments:
@@ -264,7 +259,7 @@ Usage
 
   optional arguments:
     -h, --help            show this help message and exit
-    --beam-width BEAM_WIDTH
+    --beam-size BEAM_SIZE
                           (default: 10)
     --max-words MAX_WORDS
                           (default: 80)
@@ -276,6 +271,9 @@ Usage
     --batch-greedy        greedy decode on batches of sentences at once
     --batch-size BATCH_SIZE
                           batch size for --batch-greedy (default: 80)
+    --batch-max-words BATCH_MAX_WORDS
+                          (default: 4000)
+    --nbest               write nbest list; n = beam-size
 
 Prediction uses the latest iteration model file by default.  You can
 use the model with the best validation score by passing
