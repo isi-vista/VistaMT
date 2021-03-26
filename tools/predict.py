@@ -61,6 +61,10 @@ def main():
         raise ValueError('no config file found in model directory')
     config = ModelConfiguration(config_path)
 
+    # need space for all words plus start and end tokens
+    if args.max_words > config.num_positions - 2:
+        raise ValueError('args.max-words must be <= config.num_positions - 2')
+
     log.info('hostname: %s', socket.gethostname())
     x_vocab = Vocab(vocab_path=os.path.join(args.model_dir, 'x_vocab.txt'))
     y_vocab = Vocab(vocab_path=os.path.join(args.model_dir, 'y_vocab.txt'))
@@ -68,7 +72,8 @@ def main():
     compat.load_params(cnn_mt, model_file, expect_partial=True)
 
     beam_size = 1 if args.batch_greedy else args.beam_size
-    dataset = XDataset(args.src, x_vocab, max_words_per_batch=args.batch_max_words,
+    dataset = XDataset(args.src, x_vocab, config.num_positions,
+                       max_words_per_batch=args.batch_max_words,
                        max_sentences_per_batch=args.batch_size)
     log.info('building batch predictor, beam size {}'.format(beam_size))
     predict_f = batch_predict if not args.nbest else batch_predict_n

@@ -19,7 +19,8 @@ class XYDataset:
         self.random_state = random_state
         self.all_x, self.all_y = self._load(xpath, ypath)
         self.batches = self._make_batches(max_words_per_batch, max_sentences_per_batch)
-        log.info('loaded {} examples from {}, {}'.format(self.size(), xpath, ypath))
+        log.info('loaded {} examples, {} batches from {}, {}'.format(
+            self.size(), len(self.batches), xpath, ypath))
 
     def __call__(self):
         indices = np.arange(len(self.batches))
@@ -99,9 +100,11 @@ class XYDataset:
 
 
 class XDataset:
-    def __init__(self, xpath, x_vocab, max_words_per_batch=4000, max_sentences_per_batch=200):
+    def __init__(self, xpath, x_vocab, num_positions, max_words_per_batch=4000,
+                 max_sentences_per_batch=200):
         self.xpath = xpath
         self.x_vocab = x_vocab
+        self.max_words_per_sentence = num_positions - 1  # leaving space for end token
         self.all_x = self._load(xpath)
         self.batches = self._make_batches(max_words_per_batch, max_sentences_per_batch)
         log.info('loaded {} examples from {}'.format(self.size(), xpath))
@@ -118,6 +121,9 @@ class XDataset:
         with open(xpath, encoding='utf8') as fx:
             for xline in fx:
                 xwords = xline.rstrip().split()
+                if len(xwords) > self.max_words_per_sentence:
+                    log.info('warning, truncating long sentence: {}'.format(xline.rstrip()))
+                    xwords = xwords[:self.max_words_per_sentence]
                 xwords.append(Vocab.SENT_END)
                 x = [self.x_vocab.lookup(w) for w in xwords]
                 all_x.append(x)

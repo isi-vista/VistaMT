@@ -31,11 +31,15 @@ class ConvolutionalMT:
         decoder_arch = config.decoder_arch
         out_emb_dim = config.out_emb_dim
         dropout_rate = config.dropout_rate
+        num_positions = config.num_positions
+        num_attn_heads = config.num_attn_heads
         num_dec_layers = 0
         for a in config.decoder_arch:
             num_dec_layers += a[0]
-        self.encoder = Encoder(x_vocab.size(), emb_dim, encoder_arch, dropout_rate, num_dec_layers)
-        self.decoder = Decoder(y_vocab.size(), emb_dim, out_emb_dim, decoder_arch, dropout_rate)
+        self.encoder = Encoder(x_vocab.size(), emb_dim, encoder_arch, dropout_rate, num_dec_layers,
+                               num_positions)
+        self.decoder = Decoder(y_vocab.size(), emb_dim, out_emb_dim, decoder_arch, dropout_rate,
+                               num_positions, num_attn_heads)
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=DEFAULT_LEARNING_RATE)
         self.beam_search = BeamSearch(self.encoder, self.decoder, y_vocab)
         self.checkpoint = tf.train.Checkpoint(optimizer=self.optimizer, encoder=self.encoder,

@@ -17,6 +17,10 @@ class ModelConfiguration:
                 self.out_emb_dim = v
             elif k == 'dropout_rate':
                 self.dropout_rate = v
+            elif k == 'num_positions':
+                self.num_positions = v
+            elif k == 'num_attn_heads':
+                self.num_attn_heads = v
 
     def to_json(self):
         return json.dumps(vars(self))

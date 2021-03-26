@@ -1,14 +1,17 @@
 import tensorflow as tf
 
 from cnn.layers import ConvGLU, Linear, Embedding
+from cnn.positional_encoding import positional_encoding
 
 
 class Encoder(tf.keras.Model):
-    def __init__(self, voc_size, emb_dim, architecture, dropout_rate, num_dec_layers):
+    def __init__(self, voc_size, emb_dim, architecture, dropout_rate, num_dec_layers,
+                 num_positions):
         super(Encoder, self).__init__()
         self.architecture = architecture
         self.num_decoder_layers = num_dec_layers
         self.x_emb = Embedding(voc_size, emb_dim)
+        self.pos_encoding = positional_encoding(num_positions, emb_dim)
         self.dropout = tf.keras.layers.Dropout(dropout_rate)
         self.conv_in_projections = []
         self.convolutions = []
@@ -25,7 +28,9 @@ class Encoder(tf.keras.Model):
 
     def call(self, inputs, training=False, **kwargs):
         x, x_mask = inputs
+        seq_len = tf.shape(x)[1]
         x_emb = self.x_emb(x)
+        x_emb += self.pos_encoding[:, :seq_len, :]
         x_emb = x_emb * tf.expand_dims(x_mask, axis=2)
         x_emb = self.dropout(x_emb, training)
         h_enc = self.prj_in(x_emb)

@@ -22,10 +22,13 @@ THIS_DIR=$(dirname $0)
 REF=$1
 SYS=$2
 
+# There's a bug in multi-bleu-detok.perl where the -lc flag does not
+# consider non-ascii.  The version of the script in the cnn tree has
+# been patched.  The `perl -C` flag below is a redundant workaround.
+# Detruecasing should happen before detokenizing.
+
 MOSES_ROOT=${THIS_DIR}/../third-party/mosesdecoder
 cat $SYS \
-| sed 's/$/ /' | sed 's/@@ //g' \
-| $MOSES_ROOT/scripts/recaser/detruecase.perl \
-| $MOSES_ROOT/scripts/tokenizer/detokenizer.perl \
-| sed 's|@/@|/|g' | sed 's/@-/-/g' | sed 's/-@/-/g' | sed 's|</s>||' \
-| ${THIS_DIR}/../third-party/nematus/data/multi-bleu-detok.perl $opt $REF
+| ( [[ -z "$opt" ]] && $MOSES_ROOT/scripts/recaser/detruecase.perl || cat ) \
+| ${THIS_DIR}/detok.sh \
+| perl -C ${THIS_DIR}/../third-party/nematus/data/multi-bleu-detok.perl $opt $REF
