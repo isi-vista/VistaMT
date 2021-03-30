@@ -122,17 +122,18 @@ After a typical run, the MODEL_DIR will looks like this::
   x_vocab.txt
   y_vocab.txt
   config.json
-  model-iter-60000.npz
-  training-state-model-iter-60000.json
-  model-iter-60000.npz.success
-  model-iter-65000.npz
-  training-state-model-iter-65000.json
-  model-iter-65000.npz.success
-  model-iter-70000.npz
-  training-state-model-iter-70000.json
-  model-iter-70000.npz.success
+  ...
+  models/cnn01/model-iter-165000.data-00000-of-00002
+  models/cnn01/model-iter-165000.data-00001-of-00002
+  models/cnn01/model-iter-165000.index
+  models/cnn01/model-iter-165000.success
+  models/cnn01/model-iter-165000.training-state.json
+  models/cnn01/model.data-00000-of-00002
+  models/cnn01/model.data-00001-of-00002
+  models/cnn01/model.index
+  models/cnn01/model.success
+  models/cnn01/model.training-state.json
   train.log
-  model.npz
 
 Models are written to disk after every validation run.  The models are
 named with the iteration number.  Only the last ``keep_models`` models
@@ -142,9 +143,9 @@ not stopped in the middle of writing a model file.  A training state
 file is also written with each model so that training can be
 restarted.
 
-The iteration with the best performance is kept as ``model.npz``.  If
-``--valid-ref`` is given performance is measured as the max greedy
-BLEU score.  Otherwise the minimum validation cost is used.
+The iteration with the best performance is kept with the ``model.`
+prefix`.  If ``--valid-ref`` is given performance is measured as the
+max greedy BLEU score.  Otherwise the minimum validation cost is used.
 
 When a training run is restarted, it uses the latest iteration files
 in the MODEL_DIR as a starting point.  The MODEL_DIR/config.json file
@@ -153,9 +154,6 @@ is a copy of the config file used when training began.
 Parameters like ``patience`` or ``epochs`` can be changed.  After a
 typical training run completes, you may indeed need to increase these
 otherwise training may immediately stop.
-
-Be careful changing the optimzier (e.g. Adam keeps state) or the batch
-size since iteration numbers will change meaning.
 
 Learning rate can be changed on restart by passing both
 ``--learning-rate`` and ``override-learning-rate``.  The latter is a
@@ -177,9 +175,11 @@ which looks like this:
   {
     "emb_dim": 512,
     "out_emb_dim": 512,
-    "dropout_rate": 0.2,
+    "dropout_rate": 0.3,
     "encoder_arch": [[15,3,512]],
-    "decoder_arch": [[10,3,512]]
+    "decoder_arch": [[10,3,512]],
+    "num_positions": 256,
+    "num_attn_heads": 4
   }
 
 This holds the structural configuration of the static graph; these
@@ -200,6 +200,13 @@ layers of 3-wide convolutions with 512 dimension embeddings, followed
 by 3 layers of 5-wide convolutions with 768 dimension embeddings,
 finally followed by 2 layers of 3-wide convolutions with 1024
 dimension embeddings.
+
+``num_positions`` is the maximum number of positions available for the
+position embeddings.
+
+``num_attn_heads`` is the number of heads used for multi-head
+attention.
+
 
 Example
 -------

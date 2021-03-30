@@ -1,7 +1,9 @@
 {
   "emb_dim": 512,
   "out_emb_dim": 512,
-  "dropout_rate": 0.2,
-  "encoder_arch": [[10,3,512]],
-  "decoder_arch": [[10,3,512]]
+  "dropout_rate": 0.3,
+  "encoder_arch": [[15,3,512]],
+  "decoder_arch": [[10,3,512]],
+  "num_positions": 256,
+  "num_attn_heads": 4
 }

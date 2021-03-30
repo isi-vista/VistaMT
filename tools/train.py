@@ -121,6 +121,10 @@ def main():
         config = ModelConfiguration(args.config)
         shutil.copyfile(args.config, config_path)
 
+    # need space for all words plus start and end tokens
+    if args.max_words > config.num_positions - 2:
+        raise ValueError('args.max-words must be <= config.num_positions - 2')
+
     max_seconds = 0
     if args.max_train_duration:
         # days:hrs:mins:secs with all optional except secs
@@ -279,7 +283,8 @@ def train(config, model_dir, train_src, train_tgt, valid_src,
                                  max_words_per_batch=batch_max_words,
                                  max_sentences_per_batch=batch_max_sentences,
                                  random_state=None)
-    valid_x_dataset = XDataset(valid_src, x_vocab, max_words_per_batch=batch_max_words,
+    valid_x_dataset = XDataset(valid_src, x_vocab, config.num_positions,
+                               max_words_per_batch=batch_max_words,
                                max_sentences_per_batch=batch_max_sentences)
 
     log.info('starting train loop...')
@@ -329,10 +334,10 @@ def train(config, model_dir, train_src, train_tgt, valid_src,
                 log.info('END   Validating')
                 ts = train_seconds + int(time.time() - start)
                 log.info('bleu{} {:5s} max {:5s} cost {:f} min {:f} bad_counter {:d} lr {:f} '
-                         'iter {:d} train_secs {:d}'.format(
+                         'iter {:d} completed_epochs: {:d} train_secs {:d}'.format(
                           '-lc' if lc_bleu else '', bleu_s, max_bleu_s, valid_cost,
                           min(state.validation_costs), state.bad_counter, state.learning_rate,
-                          state.training_iteration, ts))
+                          state.training_iteration, state.completed_epochs, ts))
                 model_src = save_model(cnn_mt, model_dir, keep_models, state,
                                        train_seconds + int(time.time() - start))
                 if new_best:
@@ -387,8 +392,8 @@ def test(cnn_mt, x_vocab, y_vocab, test_sentences, max_words):
         log.info('%s', sent)
         sent = sent + ' ' + Vocab.SENT_END
         x = [x_vocab.lookup(w) for w in sent.split()]
-        batch_x = [x]
-        batch_x_mask = np.ones_like(batch_x)
+        batch_x = np.array([x], dtype=np.int32)
+        batch_x_mask = np.ones_like(batch_x, dtype=np.float32)
         sample = cnn_mt.predict(batch_x, batch_x_mask, max_words, 1)[0]
         log.info('%s', y_vocab.words_for_indexes(sample))
         log.info('')

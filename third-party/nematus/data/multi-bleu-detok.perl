@@ -12,6 +12,9 @@
 use warnings;
 use strict;
 
+binmode(STDIN, ":utf8");
+use open ':encoding(UTF-8)';
+
 my $lowercase = 0;
 if ($ARGV[0] eq "-lc") {
   $lowercase = 1;

@@ -14,6 +14,9 @@ class BeamSearch:
         x_rep = np.repeat(x, repeats=beam_size, axis=0)
         x_mask_rep = np.repeat(x_mask, repeats=beam_size, axis=0)
         words_out, backtrace, cost = self.forward_pass(x_rep, x_mask_rep, maxlen, beam_size)
+        words_out = words_out.numpy()
+        backtrace = backtrace.numpy()
+        cost = cost.numpy()
         sentences = self.recover_sentences_from_beam(words_out, backtrace)
         sentence_lengths = [len(s) for s in sentences]
         norm_cost = cost / sentence_lengths
@@ -26,9 +29,12 @@ class BeamSearch:
         x_rep = np.repeat(x, repeats=beam_size, axis=0)
         x_mask_rep = np.repeat(x_mask, repeats=beam_size, axis=0)
         words_out, backtrace, cost = self.forward_pass(x_rep, x_mask_rep, maxlen, beam_size)
+        words_out = words_out.numpy()
+        backtrace = backtrace.numpy()
+        cost = cost.numpy()
         sentences = self.recover_sentences_from_beam(words_out, backtrace)
         sentence_lengths = [len(s) for s in sentences]
-        norm_cost = cost.numpy() / sentence_lengths
+        norm_cost = cost / sentence_lengths
         batch_ordered_beam_sent_indices = self._get_ranked_theories(norm_cost, beam_size)
         result = []  # batch, beam, (sent, cost)
         for batch_sent_idx, beam_sent_indices in enumerate(batch_ordered_beam_sent_indices):
@@ -44,7 +50,7 @@ class BeamSearch:
                                   tf.TensorSpec((), dtype=tf.int32)))
     def forward_pass(self, x, x_mask, maxlen, beam_size):
         batch_size = tf.shape(x)[0]
-        f_min = np.finfo(np.float32).min
+        f_min = tf.float32.min
 
         i = tf.constant(0)
         init_state = self._beam_initial_state(batch_size)
@@ -68,7 +74,7 @@ class BeamSearch:
 
         def body(_i, _prev_state, _prev_w, _prev_cost, _words_out, _backtrace):
             logits, state = self.decoder([_prev_w, ctx, ctx_plus_emb, x_mask, _prev_state],
-                                         step_mode=True, training=False)
+                                         step_mode=True, pos=_i, training=False)
             logits = tf.squeeze(logits, axis=1)
             log_probs = tf.nn.log_softmax(logits)
             prev_w = tf.expand_dims(_prev_w, axis=1)
@@ -109,7 +115,7 @@ class BeamSearch:
                 w = words_out[pos, idx]
                 idx = backtrace[pos, idx]
                 pos -= 1
-                sentence.append(w.numpy())
+                sentence.append(w)
             sentence.reverse()
             sentence = np.trim_zeros(sentence, 'b')
             sentence.append(0)
